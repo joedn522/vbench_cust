@@ -30,19 +30,51 @@ class FrameProcess:
         pass
 
 
-    def get_frames(self, video_path):
+    def get_frames(self, video_path, frame_interval=4):
+        """
+        Extract frames from the middle 5 seconds of a video file with a specified interval.
+
+        Args:
+            video_path (str): Path to the video file.
+            frame_interval (int): Interval for frame extraction. Default is 1 (read every frame).
+
+        Returns:
+            list: List of frames in RGB format.
+        """
         frame_list = []
         video = cv2.VideoCapture(video_path)
+
+        # Get the FPS and total number of frames of the video
+        fps = int(video.get(cv2.CAP_PROP_FPS))
+        total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Calculate the range of the middle 5 seconds of the video
+        start_frame = max(0, (total_frames // 2) - (fps * 2))  # Start frame of the middle 5 seconds
+        end_frame = min(total_frames, (total_frames // 2) + (fps * 3))  # End frame of the middle 5 seconds
+
+        frame_idx = 0
         while video.isOpened():
             success, frame = video.read()
-            if success:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # convert to rgb
-                frame_list.append(frame)
-            else:
+            if not success:
                 break
+
+            # Only process frames within the range of the middle 5 seconds
+            if start_frame <= frame_idx < end_frame:
+                if (frame_idx - start_frame) % frame_interval == 0:  # Extract frames based on the frame_interval
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB format
+                    frame_list.append(frame)
+
+            frame_idx += 1
+
+            # Stop processing if the end frame is reached
+            if frame_idx >= end_frame:
+                break
+
         video.release()
-        assert frame_list != []
-        return frame_list 
+        print(f'Loading [video] from [{video_path}], the number of frames = [{len(frame_list)}]')
+        if not frame_list:
+            print(f"[WARNING] No frames were extracted from the video: {video_path}")
+        return frame_list
     
 
     def get_frames_from_img_folder(self, img_folder):

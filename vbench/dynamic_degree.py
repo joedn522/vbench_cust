@@ -63,11 +63,18 @@ class DynamicDegree:
 
     def infer(self, video_path):
         with torch.no_grad():
+            print(f"[DEBUG] infer() got video_path: {video_path}")
+            print(f"[DEBUG] os.path.exists(video_path): {os.path.exists(video_path)}")
+            print(f"[DEBUG] os.path.isdir(video_path): {os.path.isdir(video_path)}")
+            print(f"[DEBUG] os.path.isfile(video_path): {os.path.isfile(video_path)}")
             if video_path.endswith('.mp4'):
+                print(f"[DEBUG] video_path ends with .mp4 -> calling get_frames()")
                 frames = self.get_frames(video_path)
             elif os.path.isdir(video_path):
+                print(f"[DEBUG] video_path is directory -> calling get_frames_from_img_folder()")
                 frames = self.get_frames_from_img_folder(video_path)
             else:
+                print(f"[ERROR] video_path is neither .mp4 nor directory, raising NotImplementedError")
                 raise NotImplementedError
             self.set_params(frame=frames[0], count=len(frames))
             static_score = []
@@ -77,8 +84,14 @@ class DynamicDegree:
                 _, flow_up = self.model(image1, image2, iters=20, test_mode=True)
                 max_rad = self.get_score(image1, flow_up)
                 static_score.append(max_rad)
+            
+            total_score = sum(static_score)
+            avg_score = total_score / len(static_score) if static_score else 0
+
+            print(f"[INFO] Total score: {total_score}, Average score: {avg_score}")
+
             whether_move = self.check_move(static_score)
-            return whether_move
+            return whether_move, total_score, avg_score
 
 
     def check_move(self, score_list):
@@ -94,23 +107,78 @@ class DynamicDegree:
 
 
     def get_frames(self, video_path):
+        """
+        Extract frames from the middle 5 seconds of a video file with a specified interval.
+
+        Args:
+            video_path (str): Path to the video file.
+
+        Returns:
+            list: List of frames as PyTorch tensors.
+        """
         frame_list = []
         video = cv2.VideoCapture(video_path)
-        fps = video.get(cv2.CAP_PROP_FPS) # get fps
-        interval = max(1, round(fps / 8))
+
+        # Get the FPS and total number of frames of the video
+        fps = video.get(cv2.CAP_PROP_FPS)  # Frames per second
+        total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))  # Total number of frames
+        interval = max(1, round(fps / 8))  # Set the frame interval
+
+        # Debug log: FPS, total frames, and interval
+        print(f"[DEBUG] Video: {video_path}, FPS: {fps}, Total Frames: {total_frames}, Interval: {interval}")
+
+        # Check if the video is valid
+        if fps <= 0 or total_frames <= 0:
+            print(f"[ERROR] Invalid video file: {video_path}. FPS: {fps}, Total Frames: {total_frames}")
+            video.release()
+            return frame_list
+
+        # Calculate the range of the middle 5 seconds of the video
+        start_frame = max(0, int((total_frames // 2) - (fps * 2)))  # Start frame of the middle 5 seconds
+        end_frame = min(total_frames, int((total_frames // 2) + (fps * 3)))  # End frame of the middle 5 seconds
+
+        # Debug log: Start and end frames
+        print(f"[DEBUG] Video: {video_path}, Start Frame: {start_frame}, End Frame: {end_frame}")
+
+        frame_idx = 0
         while video.isOpened():
             success, frame = video.read()
-            if success:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # convert to rgb
-                frame = torch.from_numpy(frame.astype(np.uint8)).permute(2, 0, 1).float()
-                frame = frame[None].to(self.device)
-                frame_list.append(frame)
-            else:
+            if not success:
                 break
+
+            # Debug log: Current frame index and success status
+            #print(f"[DEBUG] Frame Index: {frame_idx}, Success: {success}")
+
+            # Only process frames within the range of the middle 5 seconds
+            if start_frame <= frame_idx < end_frame:
+                remainder = (frame_idx - start_frame) % interval
+                #print(f"[DEBUG] Frame Index: {frame_idx}, Remainder: {remainder}, Interval: {interval}")
+
+                # Use floating-point approximation to resolve precision issues
+                if abs(remainder) < 1e-6:  # Close to 0
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB format
+                    frame = torch.from_numpy(frame.astype(np.uint8)).permute(2, 0, 1).float()
+                    frame = frame[None].to(self.device)
+                    frame_list.append(frame)
+
+                    # Debug log: Frame added to the list
+                    #print(f"[DEBUG] Frame added at index: {frame_idx}")
+
+            frame_idx += 1
+
+            # Stop processing if the end frame is reached
+            if frame_idx >= end_frame:
+                break
+
         video.release()
-        assert frame_list != []
-        frame_list = self.extract_frame(frame_list, interval)
-        return frame_list 
+
+        # Log a warning if no frames were extracted
+        if not frame_list:
+            print(f"[WARNING] No frames were extracted from the video: {video_path}")
+        else:
+            print(f"[INFO] Extracted {len(frame_list)} frames from the video: {video_path}")
+
+        return frame_list
     
     
     def extract_frame(self, frame_list, interval=1):
@@ -139,26 +207,64 @@ class DynamicDegree:
 
 
 def dynamic_degree(dynamic, video_list):
-    sim = []
-    video_results = []
+    """
+    Calculate the dynamic degree for a list of videos.
+
+    Args:
+        dynamic (DynamicDegree): The DynamicDegree object for processing videos.
+        video_list (list): List of video paths to process.
+
+    Returns:
+        tuple: Average score across all videos and individual video results.
+    """
+    sim = []  # List to store average scores for each video
+    video_results = []  # List to store results for each video
+
     for video_path in tqdm(video_list, disable=get_rank() > 0):
-        score_per_video = dynamic.infer(video_path)
-        video_results.append({'video_path': video_path, 'video_results': score_per_video})
-        sim.append(score_per_video)
-    avg_score = np.mean(sim)
+        # Process each video and calculate scores
+        whether_move, total_score, avg_score = dynamic.infer(video_path)
+        print(f"Whether move: {whether_move}, Total score: {total_score}, Average score: {avg_score}")
+
+        # Append the result for the current video
+        video_results.append({
+            "video_path": video_path,
+            "video_results": avg_score  # Use the average score as the result
+        })
+        sim.append(avg_score)  # Append the average score to the sim list
+
+    # Calculate the overall average score across all videos
+    avg_score = np.mean(sim) if sim else 0
     return avg_score, video_results
 
 
 
 def compute_dynamic_degree(json_dir, device, submodules_list, **kwargs):
-    model_path = submodules_list["model"] 
-    # set_args
-    args_new = edict({"model":model_path, "small":False, "mixed_precision":False, "alternate_corr":False})
+    """
+    Compute the dynamic degree for a list of videos.
+
+    Args:
+        json_dir (str): Path to the JSON directory containing video information.
+        device (torch.device): The device to run the model on.
+        submodules_list (dict): Dictionary containing model paths and configurations.
+
+    Returns:
+        tuple: Overall average score and detailed video results.
+    """
+    model_path = submodules_list["model"]
+    # Set arguments for the RAFT model
+    args_new = edict({"model": model_path, "small": False, "mixed_precision": False, "alternate_corr": False})
     dynamic = DynamicDegree(args_new, device)
+
+    # Load video list and distribute it across ranks
     video_list, _ = load_dimension_info(json_dir, dimension='dynamic_degree', lang='en')
     video_list = distribute_list_to_rank(video_list)
+
+    # Calculate dynamic degree for all videos
     all_results, video_results = dynamic_degree(dynamic, video_list)
+
+    # Handle distributed results if running on multiple GPUs
     if get_world_size() > 1:
         video_results = gather_list_of_dict(video_results)
         all_results = sum([d['video_results'] for d in video_results]) / len(video_results)
+
     return all_results, video_results
