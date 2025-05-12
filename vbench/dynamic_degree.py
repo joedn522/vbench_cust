@@ -67,7 +67,7 @@ class DynamicDegree:
             print(f"[DEBUG] os.path.exists(video_path): {os.path.exists(video_path)}")
             print(f"[DEBUG] os.path.isdir(video_path): {os.path.isdir(video_path)}")
             print(f"[DEBUG] os.path.isfile(video_path): {os.path.isfile(video_path)}")
-            if video_path.endswith('.mp4'):
+            if video_path.endswith(('.mp4', '.mov')):
                 print(f"[DEBUG] video_path ends with .mp4 -> calling get_frames()")
                 frames = self.get_frames(video_path)
             elif os.path.isdir(video_path):

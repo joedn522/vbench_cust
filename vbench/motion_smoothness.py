@@ -143,7 +143,7 @@ class MotionSmoothness:
     def motion_score(self, video_path):
         iters = int(self.niters)
         # get inputs
-        if video_path.endswith('.mp4'):
+        if video_path.endswith(('.mp4', '.mov')):
             frames = self.fp.get_frames(video_path)
         elif os.path.isdir(video_path):
             frames = self.fp.get_frames_from_img_folder(video_path)
