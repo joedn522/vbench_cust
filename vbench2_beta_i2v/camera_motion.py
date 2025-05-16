@@ -48,6 +48,22 @@ class CameraPredict:
     def infer(self, video_path, save_video=False, save_dir="./saved_videos"):
         # load video
         video = load_video(video_path, return_tensor=False)
+
+        # get fps
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        cap.release()
+        if fps == 0 or np.isnan(fps):      # to avoid some video with 0/nan fps
+            fps = 30                      
+
+        # only keep 5 seconds of video
+        num_frames = int(round(5 * fps))
+        if num_frames < len(video):      
+            start = max((len(video) - num_frames) // 2, 0)
+            end   = start + num_frames
+            video = video[start:end]
+
         # set scale
         height, width = video.shape[1], video.shape[2]
         self.scale = min(height, width)
@@ -164,7 +180,8 @@ def get_type(video_name):
         if item in video_name:
             return value
         
-    raise ValueError("Not a recognized video name")
+    #raise ValueError("Not a recognized video name")
+    return "static"
 
 
 
