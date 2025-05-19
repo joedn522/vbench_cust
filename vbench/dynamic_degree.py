@@ -78,7 +78,7 @@ class DynamicDegree:
                 raise NotImplementedError
             self.set_params(frame=frames[0], count=len(frames))
             static_score = []
-            for image1, image2 in zip(frames[:-1], frames[1:]):
+            for image1, image2 in zip(frames[:-1:2], frames[1::2]):
                 padder = InputPadder(image1.shape)
                 image1, image2 = padder.pad(image1, image2)
                 _, flow_up = self.model(image1, image2, iters=20, test_mode=True)
