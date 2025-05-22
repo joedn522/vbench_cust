@@ -165,7 +165,7 @@ def load_video(video_path, data_transform=None, num_frames=None, return_tensor=T
         frame = np.array(frame).astype(np.uint8)
         frame_ls = [frame]
         buffer = np.array(frame_ls)
-    elif video_path.endswith('.mp4'):
+    elif video_path.endswith(('.mp4', '.mov')):
         import decord
         decord.bridge.set_bridge('native')
         if width:
