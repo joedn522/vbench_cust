@@ -64,6 +64,11 @@ class CameraPredict:
             end   = start + num_frames
             video = video[start:end]
 
+        # down-sample
+        stride = 10       
+        if len(video) > 1:
+            video = video[::stride]
+
         # set scale
         height, width = video.shape[1], video.shape[2]
         self.scale = min(height, width)
