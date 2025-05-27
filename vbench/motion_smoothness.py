@@ -30,13 +30,13 @@ class FrameProcess:
         pass
 
 
-    def get_frames(self, video_path, frame_interval=4):
+    def get_frames(self, video_path, target_fps=6):
         """
-        Extract frames from the middle 5 seconds of a video file with a specified interval.
+        Extract frames from the middle 5 seconds of a video file with a dynamically calculated interval.
 
         Args:
             video_path (str): Path to the video file.
-            frame_interval (int): Interval for frame extraction. Default is 1 (read every frame).
+            target_fps (int): Target number of frames to extract per second. Default is 6.
 
         Returns:
             list: List of frames in RGB format.
@@ -45,12 +45,16 @@ class FrameProcess:
         video = cv2.VideoCapture(video_path)
 
         # Get the FPS and total number of frames of the video
-        fps = int(video.get(cv2.CAP_PROP_FPS))
+        fps = video.get(cv2.CAP_PROP_FPS)
         total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
 
+        # Dynamically calculate frame_interval
+        frame_interval = max(1, round(fps / target_fps))
+        print(f"[INFO] Video FPS: {fps}, Target FPS: {target_fps}, Frame Interval: {frame_interval}")
+
         # Calculate the range of the middle 5 seconds of the video
-        start_frame = max(0, (total_frames // 2) - (fps * 2))  # Start frame of the middle 5 seconds
-        end_frame = min(total_frames, (total_frames // 2) + (fps * 3))  # End frame of the middle 5 seconds
+        start_frame = max(0, (total_frames // 2) - int(fps * 2.5))  # Start frame of the middle 5 seconds
+        end_frame = min(total_frames, (total_frames // 2) + int(fps * 2.5))  # End frame of the middle 5 seconds
 
         frame_idx = 0
         while video.isOpened():
@@ -100,11 +104,12 @@ class FrameProcess:
 
 
 class MotionSmoothness:
-    def __init__(self, config, ckpt, device):
+    def __init__(self, config, ckpt, device, downsample_ratio=1.0):
         self.device = device
         self.config = config
         self.ckpt = ckpt
         self.niters = 1
+        self.downsample_ratio = downsample_ratio
         self.initialization()
         self.load_model()
 
@@ -123,7 +128,7 @@ class MotionSmoothness:
 
 
     def initialization(self):
-        if self.device == 'cuda':
+        if isinstance(self.device, torch.device) and self.device.type == 'cuda':
             self.anchor_resolution = 1024 * 512
             self.anchor_memory = 1500 * 1024**2
             self.anchor_memory_bias = 2500 * 1024**2
@@ -150,8 +155,17 @@ class MotionSmoothness:
         else:
             raise NotImplementedError
         frame_list = self.fp.extract_frame(frames, start_from=0)
-        # print(f'Loading [images] from [{video_path}], the number of images = [{len(frame_list)}]')
-        inputs = [img2tensor(frame).to(self.device) for frame in frame_list]
+
+        inputs = []
+        for frame in frame_list:
+            if self.downsample_ratio != 1.0:
+                new_size = (int(frame.shape[1] * self.downsample_ratio),
+                            int(frame.shape[0] * self.downsample_ratio))
+                frame_ds = cv2.resize(frame, new_size, interpolation=cv2.INTER_LINEAR)
+            else:
+                frame_ds = frame
+            inputs.append(img2tensor(frame_ds).to(self.device))
+
         assert len(inputs) > 1, f"The number of input should be more than one (current {len(inputs)})"
         inputs = check_dim_and_resize(inputs)
         h, w = inputs[0].shape[-2:]
@@ -180,7 +194,15 @@ class MotionSmoothness:
         # -----------------------  cal_vfi_score ----------------------- 
         outputs = padder.unpad(*outputs)
         outputs = [tensor2img(out) for out in outputs]
-        vfi_score = self.vfi_score(frames, outputs)
+
+        if self.downsample_ratio != 1.0:
+            new_size = (int(frames[0].shape[1] * self.downsample_ratio),
+                        int(frames[0].shape[0] * self.downsample_ratio))
+            frames_ds = [cv2.resize(f, new_size, interpolation=cv2.INTER_LINEAR)
+                         for f in frames]
+            vfi_score = self.vfi_score(frames_ds, outputs)
+        else:
+            vfi_score = self.vfi_score(frames, outputs)
         norm = (255.0 - vfi_score)/255.0
         return norm
 
@@ -214,7 +236,7 @@ def motion_smoothness(motion, video_list):
 def compute_motion_smoothness(json_dir, device, submodules_list, **kwargs):
     config = submodules_list["config"] # pretrained/amt_model/AMT-S.yaml
     ckpt = submodules_list["ckpt"] # pretrained/amt_model/amt-s.pth
-    motion = MotionSmoothness(config, ckpt, device)
+    motion = MotionSmoothness(config, ckpt, device, downsample_ratio=0.5) 
     video_list, _ = load_dimension_info(json_dir, dimension='motion_smoothness', lang='en')
     video_list = distribute_list_to_rank(video_list)
     all_results, video_results = motion_smoothness(motion, video_list)

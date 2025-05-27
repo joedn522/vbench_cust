@@ -24,9 +24,10 @@ from .distributed import (
 
 
 class DynamicDegree:
-    def __init__(self, args, device):
+    def __init__(self, args, device, downsample_ratio=1.0):
         self.args = args
         self.device = device
+        self.downsample_ratio = downsample_ratio
         self.load_model()
     
 
@@ -39,9 +40,9 @@ class DynamicDegree:
         self.model.eval()
 
 
-    def get_score(self, img, flo):
+    def get_score(self, img, flo, scale_factor=1.0):
         img = img[0].permute(1,2,0).cpu().numpy()
-        flo = flo[0].permute(1,2,0).cpu().numpy()
+        flo = flo[0].permute(1,2,0).cpu().numpy() * scale_factor
 
         u = flo[:,:,0]
         v = flo[:,:,1]
@@ -56,9 +57,11 @@ class DynamicDegree:
         return max_rad.item()
 
 
-    def set_params(self, frame, count):
-        scale = min(list(frame.shape)[-2:])
-        self.params = {"thres":6.0*(scale/256.0), "count_num":round(4*(count/16.0))}
+    def set_params(self, orig_scale, count):
+        self.params = {
+            "thres": 6.0 * (orig_scale / 256.0),
+            "count_num": round(4 * (count / 16.0))
+        }
 
 
     def infer(self, video_path):
@@ -69,20 +72,21 @@ class DynamicDegree:
             print(f"[DEBUG] os.path.isfile(video_path): {os.path.isfile(video_path)}")
             if video_path.endswith(('.mp4', '.mov')):
                 print(f"[DEBUG] video_path ends with .mp4 -> calling get_frames()")
-                frames = self.get_frames(video_path)
+                frames, orig_scale = self.get_frames(video_path)
             elif os.path.isdir(video_path):
                 print(f"[DEBUG] video_path is directory -> calling get_frames_from_img_folder()")
-                frames = self.get_frames_from_img_folder(video_path)
+                frames, orig_scale = self.get_frames_from_img_folder(video_path)
             else:
                 print(f"[ERROR] video_path is neither .mp4 nor directory, raising NotImplementedError")
                 raise NotImplementedError
-            self.set_params(frame=frames[0], count=len(frames))
+            self.set_params(orig_scale, count=len(frames)) 
+            scale_factor = 1.0 / self.downsample_ratio  
             static_score = []
             for image1, image2 in zip(frames[:-1:2], frames[1::2]):
                 padder = InputPadder(image1.shape)
                 image1, image2 = padder.pad(image1, image2)
                 _, flow_up = self.model(image1, image2, iters=20, test_mode=True)
-                max_rad = self.get_score(image1, flow_up)
+                max_rad = self.get_score(image1, flow_up, scale_factor)
                 static_score.append(max_rad)
             
             total_score = sum(static_score)
@@ -141,6 +145,7 @@ class DynamicDegree:
         print(f"[DEBUG] Video: {video_path}, Start Frame: {start_frame}, End Frame: {end_frame}")
 
         frame_idx = 0
+        orig_scale = None
         while video.isOpened():
             success, frame = video.read()
             if not success:
@@ -156,7 +161,16 @@ class DynamicDegree:
 
                 # Use floating-point approximation to resolve precision issues
                 if abs(remainder) < 1e-6:  # Close to 0
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert to RGB format
+                    orig_h, orig_w = frame.shape[:2]
+                    if orig_scale is None:
+                        orig_scale = min(orig_h, orig_w)
+
+                    if self.downsample_ratio != 1.0:
+                        new_size = (int(orig_w * self.downsample_ratio),
+                                    int(orig_h * self.downsample_ratio))
+                        frame = cv2.resize(frame, new_size, interpolation=cv2.INTER_LINEAR)
+
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     frame = torch.from_numpy(frame.astype(np.uint8)).permute(2, 0, 1).float()
                     frame = frame[None].to(self.device)
                     frame_list.append(frame)
@@ -178,7 +192,7 @@ class DynamicDegree:
         else:
             print(f"[INFO] Extracted {len(frame_list)} frames from the video: {video_path}")
 
-        return frame_list
+        return frame_list, orig_scale
     
     
     def extract_frame(self, frame_list, interval=1):
@@ -195,14 +209,26 @@ class DynamicDegree:
         frame_list = []
         imgs = sorted([p for p in glob.glob(os.path.join(img_folder, "*")) if os.path.splitext(p)[1][1:] in exts])
         # imgs = sorted(glob.glob(os.path.join(img_folder, "*.png")))
+        orig_scale = None
         for img in imgs:
             frame = cv2.imread(img, cv2.IMREAD_COLOR)
+            orig_h, orig_w = frame.shape[:2]
+            if orig_scale is None:
+                orig_scale = min(orig_h, orig_w)
+
+            if self.downsample_ratio != 1.0:
+                new_size = (int(orig_w * self.downsample_ratio),
+                            int(orig_h * self.downsample_ratio))
+                frame = cv2.resize(frame, new_size, interpolation=cv2.INTER_LINEAR)
+
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame = torch.from_numpy(frame.astype(np.uint8)).permute(2, 0, 1).float()
             frame = frame[None].to(self.device)
             frame_list.append(frame)
-        assert frame_list != []
-        return frame_list
+
+        if not frame_list:
+            raise RuntimeError(f"No images found in {img_folder}")
+        return frame_list, orig_scale    
 
 
 
@@ -253,7 +279,7 @@ def compute_dynamic_degree(json_dir, device, submodules_list, **kwargs):
     model_path = submodules_list["model"]
     # Set arguments for the RAFT model
     args_new = edict({"model": model_path, "small": False, "mixed_precision": False, "alternate_corr": False})
-    dynamic = DynamicDegree(args_new, device)
+    dynamic = DynamicDegree(args_new, device, downsample_ratio=0.5)
 
     # Load video list and distribute it across ranks
     video_list, _ = load_dimension_info(json_dir, dimension='dynamic_degree', lang='en')
