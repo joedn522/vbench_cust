@@ -4,7 +4,6 @@ import numpy as np
 import logging
 import subprocess
 import torch
-import cv2
 from PIL import Image, ImageSequence
 from decord import VideoReader, cpu
 from torchvision import transforms
@@ -127,7 +126,7 @@ def get_frame_indices(num_frames, vlen, sample='rand', fix_start=None, input_fps
         raise ValueError
     return frame_indices
 
-def load_video(video_path, data_transform=None, num_frames=None, return_tensor=True, width=None, height=None, downsample_ratio=None):
+def load_video(video_path, data_transform=None, num_frames=None, return_tensor=True, width=None, height=None):
     """
     Load a video from a given path and apply optional data transformations.
 
@@ -180,17 +179,6 @@ def load_video(video_path, data_transform=None, num_frames=None, return_tensor=T
         raise NotImplementedError
     
     frames = buffer
-
-     # --- Downsample frames if needed ---
-    if downsample_ratio is not None and downsample_ratio < 1.0:
-        new_frames = []
-        for frame in frames:
-            h, w = frame.shape[:2]
-            new_size = (int(w * downsample_ratio), int(h * downsample_ratio))
-            frame_ds = cv2.resize(frame, new_size, interpolation=cv2.INTER_LINEAR)
-            new_frames.append(frame_ds)
-        frames = np.array(new_frames)
-
     if num_frames:
         frame_indices = get_frame_indices(
         num_frames, len(frames), sample="middle"
