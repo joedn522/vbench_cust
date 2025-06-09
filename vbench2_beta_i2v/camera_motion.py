@@ -5,7 +5,7 @@ from tqdm import tqdm
 from math import ceil
 from vbench2_beta_i2v.third_party.cotracker.utils.visualizer import Visualizer
 from vbench2_beta_i2v.utils import load_video, load_dimension_info
-
+import cv2
 
 def transform(vector):
     x = np.mean([item[0] for item in vector])
@@ -47,10 +47,9 @@ class CameraPredict:
 
     def infer(self, video_path, save_video=False, save_dir="./saved_videos"):
         # load video
-        video = load_video(video_path, return_tensor=False)
+        video = load_video(video_path, return_tensor=False, downsample_ratio=0.5)
 
         # get fps
-        import cv2
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.release()
