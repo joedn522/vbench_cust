@@ -4,6 +4,7 @@ import numpy as np
 import logging
 import subprocess
 import torch
+import cv2
 from PIL import Image, ImageSequence
 from decord import VideoReader, cpu
 from torchvision import transforms
@@ -126,7 +127,7 @@ def get_frame_indices(num_frames, vlen, sample='rand', fix_start=None, input_fps
         raise ValueError
     return frame_indices
 
-def load_video(video_path, data_transform=None, num_frames=None, return_tensor=True, width=None, height=None):
+def load_video(video_path, data_transform=None, num_frames=None, return_tensor=True, width=None, height=None, downsample_ratio=None):
     """
     Load a video from a given path and apply optional data transformations.
 
@@ -166,15 +167,24 @@ def load_video(video_path, data_transform=None, num_frames=None, return_tensor=T
         frame_ls = [frame]
         buffer = np.array(frame_ls)
     elif video_path.endswith(('.mp4', '.mov')):
-        import decord
-        decord.bridge.set_bridge('native')
-        if width:
-            video_reader = VideoReader(video_path, width=width, height=height, num_threads=1)
-        else:
-            video_reader = VideoReader(video_path, num_threads=1)
-        frames = video_reader.get_batch(range(len(video_reader)))  # (T, H, W, C), torch.uint8
-
-        buffer = frames.asnumpy().astype(np.uint8)
+        # --- Use cv2 to read video ---
+        cap = cv2.VideoCapture(video_path)
+        frame_ls = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Resize if width/height is specified
+            if width and height:
+                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+            elif downsample_ratio is not None and downsample_ratio < 1.0:
+                h, w = frame.shape[:2]
+                new_size = (int(w * downsample_ratio), int(h * downsample_ratio))
+                frame = cv2.resize(frame, new_size, interpolation=cv2.INTER_LINEAR)
+            frame_ls.append(frame)
+        cap.release()
+        buffer = np.array(frame_ls)
     else:
         raise NotImplementedError
     
