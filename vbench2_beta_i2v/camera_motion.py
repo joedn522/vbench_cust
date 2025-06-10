@@ -47,7 +47,7 @@ class CameraPredict:
 
     def infer(self, video_path, save_video=False, save_dir="./saved_videos"):
         # load video
-        video = load_video(video_path, return_tensor=False)
+        video = load_video(video_path, return_tensor=False, downsample_ratio=0.5)
 
         # get fps
         import cv2
