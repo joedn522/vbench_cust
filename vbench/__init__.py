@@ -74,7 +74,7 @@ class VBench(object):
                 else:
                     for filename in video_names:
                         postfix = Path(os.path.join(videos_path, filename)).suffix
-                        if postfix.lower() not in ['.mp4', '.gif']: #  '.jpg', '.png'
+                        if postfix.lower() not in ['mov', '.mp4', '.gif']: #  '.jpg', '.png'
                             continue
                         cur_full_info_list.append({
                             "prompt_en": get_prompt_from_filename(filename), 

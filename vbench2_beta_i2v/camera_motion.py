@@ -221,9 +221,14 @@ def camera_motion(camera, video_list):
     }
     for video_path in tqdm(video_list):
         target_type = get_type(os.path.basename(video_path))
-        predict_results = camera.predict(video_path)
+        try:                             
+            predict_results = camera.predict(video_path)
+            video_score     = 1.0 if target_type in predict_results else 0.0
+        except Exception as e:           
+            predict_results = ["load_fail"]
+            video_score     = 0.0
+            print(f"[WARN] {video_path} skipped: {e}")
 
-        video_score = 1.0 if target_type in predict_results else 0.0
         diff_type_results[target_type].append(video_score)
         video_results.append({'video_path': video_path, 'video_results': video_score, 'prompt_type':target_type, 'predict_type': predict_results})
         sim.append(video_score)
