@@ -1,6 +1,7 @@
 import torch
 import os
 import numpy as np
+import time
 from tqdm import tqdm
 from math import ceil
 from vbench2_beta_i2v.third_party.cotracker.utils.visualizer import Visualizer
@@ -34,54 +35,63 @@ def transform_class(vector, min_reso, factor=0.05): # 768*0.05
 
 class CameraPredict:
     def __init__(self, device, submodules_list):
+        tic = time.time()
         self.device = device
         self.grid_size = 10
         self.number_points = 1
         try:
             self.model = torch.hub.load(submodules_list["repo"], submodules_list["model"]).to(self.device)
         except:
-            # workaround for CERTIFICATE_VERIFY_FAILED (see: https://github.com/pytorch/pytorch/issues/33288#issuecomment-954160699)
             import ssl
             ssl._create_default_https_context = ssl._create_unverified_context
             self.model = torch.hub.load(submodules_list["repo"], submodules_list["model"]).to(self.device)
+        print(f"[Timer] CameraPredict.__init__: {time.time() - tic:.3f}s")
 
     def infer(self, video_path, save_video=False, save_dir="./saved_videos"):
-        # load video
+        tic_total = time.time()
+        tic = time.time()
         video = load_video(video_path, return_tensor=False)
+        print(f"[Timer] infer: load_video={time.time() - tic:.3f}s")
 
-        # get fps
+        tic = time.time()
         import cv2
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.release()
-        if fps == 0 or np.isnan(fps):      # to avoid some video with 0/nan fps
-            fps = 30                      
+        if fps == 0 or np.isnan(fps):
+            fps = 30
+        print(f"[Timer] infer: fps={time.time() - tic:.3f}s")
 
-        # only keep 5 seconds of video
+        tic = time.time()
         num_frames = int(round(5 * fps))
-        if num_frames < len(video):      
+        if num_frames < len(video):
             start = max((len(video) - num_frames) // 2, 0)
-            end   = start + num_frames
+            end = start + num_frames
             video = video[start:end]
-
-        # down-sample
-        stride = 10       
+        stride = 10
         if len(video) > 1:
             video = video[::stride]
+        print(f"[Timer] infer: trim/downsample={time.time() - tic:.3f}s")
 
-        # set scale
+        tic = time.time()
         height, width = video.shape[1], video.shape[2]
         self.scale = min(height, width)
-        video = torch.from_numpy(video).permute(0, 3, 1, 2)[None].float().to(self.device) # B T C H W
-        pred_tracks, pred_visibility = self.model(video, grid_size=self.grid_size) # B T N 2,  B T N 1
-        
+        video = torch.from_numpy(video).permute(0, 3, 1, 2)[None].float().to(self.device)
+        print(f"[Timer] infer: to_tensor={time.time() - tic:.3f}s")
+
+        tic = time.time()
+        pred_tracks, pred_visibility = self.model(video, grid_size=self.grid_size)
+        print(f"[Timer] infer: model={time.time() - tic:.3f}s")
+
         if save_video:
+            tic = time.time()
             video_name = os.path.basename(video_path)[:-4]
             vis = Visualizer(save_dir=save_dir, pad_value=120, linewidth=3)
             vis.visualize(video, pred_tracks, pred_visibility, filename=video_name)
+            print(f"[Timer] infer: save_video={time.time() - tic:.3f}s")
 
+        print(f"[Timer] infer: total={time.time() - tic_total:.3f}s")
         return pred_tracks[0].long().detach().cpu().numpy()
-    
 
     def get_edge_point(self, track):
         middle = self.grid_size // 2
@@ -162,11 +172,18 @@ class CameraPredict:
 
 
     def predict(self, video_path):
+        tic_total = time.time()
+        tic = time.time()
         pred_track = self.infer(video_path)
+        print(f"[Timer] predict: infer={time.time() - tic:.3f}s")
+
+        tic = time.time()
         track1 = pred_track[0].reshape((self.grid_size, self.grid_size, 2))
         track2 = pred_track[-1].reshape((self.grid_size, self.grid_size, 2))
         results = self.camera_classify(track1, track2)
+        print(f"[Timer] predict: classify={time.time() - tic:.3f}s")
 
+        print(f"[Timer] predict: total={time.time() - tic_total:.3f}s")
         return results
 
 
