@@ -1,6 +1,7 @@
 import os
 
 from .utils import get_prompt_from_filename, init_submodules, save_json, load_json
+import csv
 import importlib
 from itertools import chain
 from pathlib import Path
@@ -14,6 +15,35 @@ class VBench(object):
         self.full_info_dir = full_info_dir          # full json file that VBench originally provides
         self.output_path = output_path              # output directory to save VBench results
         os.makedirs(self.output_path, exist_ok=True)
+
+    def _build_list_capable(
+        self, videos_path, name, dimension_list,
+        *args, prompt_list=None, special_str='', **kwargs
+    ):
+        suf = Path(videos_path).suffix.lower()
+        if suf in {".list", ".txt", ".tsv"}:
+            with open(videos_path) as f:
+                if suf == ".tsv":
+                    paths = [row[0] for row in csv.reader(f, delimiter="\t") if row]
+                else:
+                    paths = [ln.strip().split("\t")[0] for ln in f if ln.strip()]
+
+            cur_list = [{
+                "prompt_en": get_prompt_from_filename(p),
+                "dimension": dimension_list,
+                "video_list": [p]
+            } for p in paths]
+
+            fi_path = os.path.join(self.output_path, name+"_full_info.json")
+            save_json(cur_list, fi_path)
+            print0(f"Evaluation meta data saved to {fi_path}")
+            return fi_path
+
+        # 不是清單檔 → 走舊邏輯
+        return self.build_full_info_json(
+            videos_path, name, dimension_list,
+            prompt_list, special_str, **kwargs
+        )
 
     def build_full_dimension_list(self, ):
         return ["subject_consistency", "background_consistency", "aesthetic_quality", "imaging_quality", "object_class", "multiple_objects", "color", "spatial_relationship", "scene", "temporal_style", 'overall_consistency', "human_action", "temporal_flickering", "motion_smoothness", "dynamic_degree", "appearance_style"]        
@@ -168,13 +198,21 @@ class VBench(object):
         return cur_full_info_path
 
 
-    def evaluate(self, videos_path, name, prompt_list=[], dimension_list=None, local=False, read_frame=False, mode='vbench_standard', **kwargs):
-        results_dict = {}
+    def evaluate(
+        self, videos_path, name, prompt_list=[],
+        dimension_list=None, local=False, read_frame=False,
+        mode='vbench_standard', **kwargs
+    ):
+        results_dict = {}      # ← 新增
         if dimension_list is None:
             dimension_list = self.build_full_dimension_list()
-        submodules_dict = init_submodules(dimension_list, local=local, read_frame=read_frame)
+        submodules_dict = init_submodules(dimension_list,
+                                          local=local, read_frame=read_frame)
 
-        cur_full_info_path = self.build_full_info_json(videos_path, name, dimension_list, prompt_list, mode=mode, **kwargs)
+        cur_full_info_path = self._build_list_capable(
+            videos_path, name, dimension_list,
+            prompt_list=prompt_list, mode=mode, **kwargs
+        )
         
         for dimension in dimension_list:
             try:

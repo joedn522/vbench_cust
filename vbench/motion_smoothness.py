@@ -148,7 +148,7 @@ class MotionSmoothness:
     def motion_score(self, video_path):
         iters = int(self.niters)
         # get inputs
-        if video_path.endswith(('.mp4', '.mov')):
+        if video_path.lower().endswith(('.mp4', '.mov')):
             frames = self.fp.get_frames(video_path)
         elif os.path.isdir(video_path):
             frames = self.fp.get_frames_from_img_folder(video_path)
@@ -166,7 +166,8 @@ class MotionSmoothness:
                 frame_ds = frame
             inputs.append(img2tensor(frame_ds).to(self.device))
 
-        assert len(inputs) > 1, f"The number of input should be more than one (current {len(inputs)})"
+        if len(inputs) <= 1:
+            raise RuntimeError("Too few frames")
         inputs = check_dim_and_resize(inputs)
         h, w = inputs[0].shape[-2:]
         scale = self.anchor_resolution / (h * w) * np.sqrt((self.vram_avail - self.anchor_memory_bias) / self.anchor_memory)
@@ -226,10 +227,24 @@ def motion_smoothness(motion, video_list):
     sim = []
     video_results = []
     for video_path in tqdm(video_list, disable=get_rank() > 0):
-        score_per_video = motion.motion_score(video_path)
-        video_results.append({'video_path': video_path, 'video_results': score_per_video})
-        sim.append(score_per_video)
-    avg_score = np.mean(sim)
+        try:
+            score = motion.motion_score(video_path)
+        except Exception as e:
+            # 單影片失敗：記 -1、寫 log、繼續跑
+            print(f"[MS][ERROR] {video_path} -> {e}")
+            score = None
+
+        if score is None or np.isnan(score):
+            video_results.append(
+                {"video_path": video_path, "video_results": -1}
+            )
+        else:
+            video_results.append(
+                {"video_path": video_path, "video_results": float(score)}
+            )
+            sim.append(score)
+    
+    avg_score = np.mean(sim) if sim else -1
     return avg_score, video_results
 
 

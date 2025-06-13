@@ -70,7 +70,7 @@ class DynamicDegree:
             print(f"[DEBUG] os.path.exists(video_path): {os.path.exists(video_path)}")
             print(f"[DEBUG] os.path.isdir(video_path): {os.path.isdir(video_path)}")
             print(f"[DEBUG] os.path.isfile(video_path): {os.path.isfile(video_path)}")
-            if video_path.endswith(('.mp4', '.mov')):
+            if video_path.lower().endswith(('.mp4', '.mov')):
                 print(f"[DEBUG] video_path ends with .mp4 -> calling get_frames()")
                 frames, orig_scale = self.get_frames(video_path)
             elif os.path.isdir(video_path):
@@ -248,18 +248,28 @@ def dynamic_degree(dynamic, video_list):
 
     for video_path in tqdm(video_list, disable=get_rank() > 0):
         # Process each video and calculate scores
-        whether_move, total_score, avg_score = dynamic.infer(video_path)
-        print(f"Whether move: {whether_move}, Total score: {total_score}, Average score: {avg_score}")
+        try:
+            whether_move, total_score, avg_score = dynamic.infer(video_path)
+        except Exception as e:
+            print(f"[DD][ERROR] {video_path} -> {e}")
+            whether_move, total_score, avg_score = None, None, None
+
+        # optional︰留下 debug 訊息；若三者都是 None 就不印
+        if avg_score is not None:
+            print(f"[INFO] {video_path}  move={whether_move}  "
+                  f"total={total_score:.4f}  avg={avg_score:.4f}")
 
         # Append the result for the current video
-        video_results.append({
-            "video_path": video_path,
-            "video_results": avg_score  # Use the average score as the result
-        })
-        sim.append(avg_score)  # Append the average score to the sim list
+        video_results.append(
+            {"video_path": video_path,
+             "video_results": -1 if avg_score is None else float(avg_score)}
+        )
+
+        if avg_score is not None and not np.isnan(avg_score):
+            sim.append(avg_score)
 
     # Calculate the overall average score across all videos
-    avg_score = np.mean(sim) if sim else 0
+    avg_score = np.mean(sim) if sim else -1
     return avg_score, video_results
 
 
